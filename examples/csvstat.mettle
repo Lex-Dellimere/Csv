@@ -1,0 +1,47 @@
+// csvstat: counts records and fields in a CSV file, streaming, and reports
+// the first error with its line and column.
+//
+//   csvstat FILE [DELIMITER]
+import "std/io";
+import "std/conv";
+import "csv/csv";
+
+fn main(argc: int32, argv: cstring*) -> int32 {
+  if (argc < 2) {
+    println("usage: csvstat FILE [DELIMITER]");
+    return 2;
+  }
+  var d: CsvDialect = csv_dialect();
+  d.has_header = false;
+  if (argc > 2) {
+    var delim: string = str_from_cstr(argv[2]);
+    if (delim == "tab") { d.delimiter = (uint8)'\t'; } else if (delim.length > 0) { d.delimiter = delim.chars[0]; }
+  }
+  var path: string = str_from_cstr(argv[1]);
+  var r: CsvReader* = csv_reader_open(path, d);
+  if (r == 0) {
+    println("cannot open {path}");
+    return 1;
+  }
+  var rec: CsvRecord;
+  var records: int64 = 0;
+  var fields: int64 = 0;
+  var widest: int32 = 0;
+  var status: int32 = 0;
+  while (true) {
+    var st: int32 = csv_read(r, &rec);
+    if (st == CSV_END) { break; }
+    if (st == CSV_ERROR) {
+      var buf: uint8[200];
+      println("{path}: {csv_error_format(csv_reader_error(r), &buf[0], 200)}");
+      status = 1;
+      if (csv_reader_error(r).kind != CSV_ERR_FIELD_COUNT) { break; }
+    }
+    records = records + 1;
+    fields = fields + (int64)rec.n;
+    if (rec.n > widest) { widest = rec.n; }
+  }
+  println("{records} records, {fields} fields, widest record {widest} fields, {csv_reader_line(r) - 1} lines");
+  csv_reader_free(r);
+  return status;
+}

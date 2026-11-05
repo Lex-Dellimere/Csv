@@ -1,0 +1,169 @@
+// Shared helpers for the test programs: checks, data files, hex, dialects.
+
+import "std/io";
+import "std/mem";
+import "std/conv";
+import "std/file";
+import "csv/csv";
+
+var g_checks: int64 = 0;
+var g_fails: int64 = 0;
+
+export fn t_ok(name: string, cond: bool) {
+  g_checks = g_checks + 1;
+  if (!cond) {
+    g_fails = g_fails + 1;
+    if (g_fails <= 200) { println("FAIL {name}"); }
+  }
+}
+
+export fn t_done(what: string) -> int32 {
+  println("{what}: {g_checks - g_fails} of {g_checks} checks passed");
+  if (g_fails > 0) { return 1; }
+  return 0;
+}
+
+// Reads a whole file. Test data lives until exit, so it is never freed.
+export fn t_read(path: string) -> string {
+  var fd: int64 = file_open(path, FILE_READ);
+  if (fd < 0) {
+    println("FAIL cannot open {path}");
+    g_fails = g_fails + 1;
+    return "";
+  }
+  var n: int64 = file_size(fd);
+  var buf: uint8* = (uint8*)malloc(n + 1);
+  var got: int64 = 0;
+  while (got < n) {
+    var k: int64 = file_read_at(fd, buf + got, n - got, got);
+    if (k <= 0) { break; }
+    got = got + k;
+  }
+  file_close(fd);
+  return str_from_bytes((cstring)buf, got);
+}
+
+// Line iteration: t_line(text, &pos) returns the next line without its LF.
+export fn t_line(s: string, pos: int64*) -> string {
+  var start: int64 = *pos;
+  var i: int64 = start;
+  var n: int64 = (int64)s.length;
+  while (i < n && s.chars[i] != (uint8)10) { i = i + 1; }
+  if (i < n) { *pos = i + 1; } else { *pos = n; }
+  return str_from_bytes((cstring)(s.chars + start), i - start);
+}
+
+// The word at index k (space separated), or "".
+export fn t_word(s: string, k: int32) -> string {
+  var i: int64 = 0;
+  var n: int64 = (int64)s.length;
+  var w: int32 = 0;
+  while (i < n) {
+    while (i < n && s.chars[i] == (uint8)' ') { i = i + 1; }
+    var b: int64 = i;
+    while (i < n && s.chars[i] != (uint8)' ') { i = i + 1; }
+    if (b < i) {
+      if (w == k) { return str_from_bytes((cstring)(s.chars + b), i - b); }
+      w = w + 1;
+    }
+  }
+  return "";
+}
+
+export fn t_words(s: string) -> int32 {
+  var w: int32 = 0;
+  while (t_word(s, w).length > 0) { w = w + 1; }
+  return w;
+}
+
+fn hexv(c: uint8) -> int32 {
+  if (c >= (uint8)'0' && c <= (uint8)'9') { return (int32)(c - (uint8)'0'); }
+  return (int32)(c - (uint8)'a') + 10;
+}
+
+// Decodes hex into a fresh block (never freed).
+export fn t_hex(h: string) -> string {
+  var n: int64 = (int64)h.length / 2;
+  var b: uint8* = (uint8*)malloc(n + 1);
+  for i in 0..n {
+    b[i] = (uint8)(hexv(h.chars[2 * i]) * 16 + hexv(h.chars[2 * i + 1]));
+  }
+  return str_from_bytes((cstring)b, n);
+}
+
+export fn t_int(s: string) -> int64 {
+  var v: int64 = 0;
+  csv_parse_i64(s, &v);
+  return v;
+}
+
+// Applies one "set KEY VALUE" line.
+export fn t_set(d: CsvDialect*, key: string, v: int64) {
+  if (key == "header") { d->has_header = v != 0; }
+  if (key == "flexible") { d->flexible = v != 0; }
+  if (key == "blank") { d->blank_lines = (int32)v; }
+  if (key == "bom") { d->keep_bom = v != 0; }
+  if (key == "delimiter") { d->delimiter = (uint8)v; }
+  if (key == "quote") { d->quote = (uint8)v; }
+  if (key == "escape") { d->escape = (uint8)v; }
+  if (key == "double_quote") { d->double_quote = v != 0; }
+  if (key == "comment") { d->comment = (uint8)v; }
+  if (key == "terminator") { d->terminator = (uint8)v; }
+  if (key == "skip_space") { d->skip_initial_space = v != 0; }
+  if (key == "style") { d->quote_style = (int32)v; }
+  if (key == "eol") { d->line_end = (int32)v; }
+}
+
+// A feed for csv_reader_from_fn that hands out `step` bytes at a time.
+export struct TFeed {
+  data: string;
+  at: int64;
+  step: int64;
+}
+
+export fn t_feed_fn(f: TFeed*) -> Fn(uint8*, int64) -> int64 {
+  return fn(buf: uint8*, max: int64) -> int64 {
+    var n: int64 = (int64)f->data.length - f->at;
+    if (n > f->step) { n = f->step; }
+    if (n > max) { n = max; }
+    for i in 0..n { buf[i] = f->data.chars[f->at + i]; }
+    f->at = f->at + n;
+    return n;
+  };
+}
+
+// Reads every record and renders them as one string:
+// each field as <text>, each record ended by |, and on error "!KIND".
+export fn t_render(r: CsvReader*, out: uint8*, cap: int64) -> string {
+  var at: int64 = 0;
+  var rec: CsvRecord;
+  while (true) {
+    var st: int32 = csv_read(r, &rec);
+    if (st == CSV_END) { break; }
+    if (st == CSV_ERROR) {
+      var k: int32 = csv_reader_error(r).kind;
+      if (at + 4 < cap) {
+        out[at] = (uint8)'!';
+        out[at + 1] = (uint8)'0' + (uint8)(k / 10);
+        out[at + 2] = (uint8)'0' + (uint8)(k % 10);
+        at = at + 3;
+      }
+      if (k != CSV_ERR_FIELD_COUNT && k != CSV_ERR_UTF8) { break; }
+    }
+    for i in 0..rec.n {
+      var f: string = rec.fields[i];
+      if (at + (int64)f.length + 4 >= cap) { break; }
+      out[at] = (uint8)'<';
+      at = at + 1;
+      memcpy(out + at, f.chars, (int64)f.length);
+      at = at + (int64)f.length;
+      out[at] = (uint8)'>';
+      at = at + 1;
+    }
+    if (at + 1 < cap) {
+      out[at] = (uint8)'|';
+      at = at + 1;
+    }
+  }
+  return str_from_bytes((cstring)out, at);
+}

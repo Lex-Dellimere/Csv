@@ -1,0 +1,79 @@
+// Reader conformance: csv-core's reader tests, the csv-spectrum files and
+// 10,000 random inputs in random dialects as Python's csv.reader parses
+// them (tools/gen_tests.py). Every case is read from memory and again as a
+// stream fed a few bytes at a time into a tiny buffer, so the refill paths
+// see every input too.
+import "std/io";
+import "std/mem";
+import "csv/csv";
+import "tutil";
+
+const CAP = 65536;
+
+fn put(out: uint8*, at: int64, s: string) -> int64 {
+  memcpy(out + at, s.chars, (int64)s.length);
+  return at + (int64)s.length;
+}
+
+fn run_file(path: string, base: CsvDialect) -> int64 {
+  var text: string = t_read(path);
+  var pos: int64 = 0;
+  var cases: int64 = 0;
+  var want: uint8* = (uint8*)malloc(CAP);
+  var got: uint8* = (uint8*)malloc(CAP);
+  var d: CsvDialect = base;
+  var name: string = "";
+  var input: string = "";
+  var wl: int64 = 0;
+  while (pos < (int64)text.length) {
+    var line: string = t_line(text, &pos);
+    var cmd: string = t_word(line, 0);
+    if (cmd == "case") {
+      d = base;
+      name = t_word(line, 1);
+      wl = 0;
+    } else if (cmd == "set") {
+      t_set(&d, t_word(line, 1), t_int(t_word(line, 2)));
+    } else if (cmd == "in") {
+      input = t_hex(t_word(line, 1));
+    } else if (cmd == "row") {
+      var nw: int32 = t_words(line);
+      for k in 1..nw {
+        var w: string = t_word(line, k);
+        wl = put(want, wl, "<");
+        wl = put(want, wl, t_hex(str_from_bytes((cstring)(w.chars + 1), (int64)w.length - 1)));
+        wl = put(want, wl, ">");
+      }
+      wl = put(want, wl, "|");
+    } else if (cmd == "end") {
+      cases = cases + 1;
+      var expect: string = str_from_bytes((cstring)want, wl);
+      var r: CsvReader* = csv_reader_from_string(input, d);
+      var a: string = t_render(r, got, CAP);
+      t_ok("{path} {name} memory", a == expect);
+      if (a != expect) { println("  want {expect}\n  got  {a}"); }
+      csv_reader_free(r);
+      var steps: int64[3] = [1, 3, 7];
+      var bufs: int64[3] = [1, 5, 64];
+      for si in 0..3 {
+        var feed: TFeed = { data: input, at: 0, step: steps[si] };
+        var rs: CsvReader* = csv_reader_from_fn(t_feed_fn(&feed), d);
+        csv_reader_set_buffer(rs, bufs[si]);
+        var b: string = t_render(rs, got, CAP);
+        t_ok("{path} {name} stream {steps[si]}", b == expect);
+        if (b != expect && si == 0) { println("  want {expect}\n  got  {b}"); }
+        csv_reader_free(rs);
+      }
+    }
+  }
+  return cases;
+}
+
+fn main() -> int32 {
+  var d: CsvDialect = csv_dialect();
+  var n1: int64 = run_file("tests/data/csv_core.txt", d);
+  var n2: int64 = run_file("tests/data/spectrum.txt", d);
+  var n3: int64 = run_file("tests/data/python_read.txt", d);
+  println("cases: csv-core {n1}, csv-spectrum {n2}, python {n3}");
+  return t_done("conformance");
+}

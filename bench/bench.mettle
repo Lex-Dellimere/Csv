@@ -1,0 +1,137 @@
+// Throughput of the reader and writer, in MB/s.
+//
+//   mbuild bench               (builds in release, writes bench/data.csv once)
+//   mbuild bench -- FILE.csv   (reads FILE instead)
+//
+// tools/bench_ref.sh runs the same reads with Python's csv module and zsv.
+import "std/io";
+import "std/mem";
+import "std/file";
+import "std/time";
+import "std/conv";
+import "csv/csv";
+
+fn mbps(bytes: int64, ns: int64) -> int64 {
+  if (ns <= 0) { return 0; }
+  return bytes * 1000 / ns;
+}
+
+// About 100 MB of mixed rows: numbers, short words, quoted text with
+// delimiters and doubled quotes, and empty fields.
+fn make_data(path: string) {
+  var w: CsvWriter* = csv_writer_create(path, csv_dialect());
+  if (w == 0) {
+    println("cannot write {path}");
+    return;
+  }
+  csv_write_row(w, "id", "name", "price", "qty", "note", "flag", "city", "code");
+  var seed: uint64 = 7;
+  var words: string[8] = ["alpha", "beta", "gamma", "delta", "epsilon", "zeta", "eta", "theta"];
+  for i in 0..1000000 {
+    seed = seed * 6364136223846793005 + 1442695040888963407;
+    csv_write_i64(w, (int64)i);
+    csv_write_field(w, words[(int64)((seed >> 33) & 7)]);
+    csv_write_f64(w, (float64)((seed >> 20) % 1000000) / 100.0);
+    csv_write_i64(w, (int64)((seed >> 40) % 500));
+    if ((seed >> 50) % 3 == 0) {
+      csv_write_field(w, "a note, with a comma and \"quotes\" in it");
+    } else {
+      csv_write_field(w, "plain note text that is a little longer than the others");
+    }
+    csv_write_field(w, "");
+    csv_write_field(w, words[(int64)((seed >> 45) & 7)]);
+    csv_write_i64(w, (int64)((seed >> 30) % 100000));
+    csv_write_end(w);
+  }
+  csv_writer_close(w);
+}
+
+fn read_file(path: string) -> string {
+  var fd: int64 = file_open(path, FILE_READ);
+  if (fd < 0) { return ""; }
+  var n: int64 = file_size(fd);
+  var buf: uint8* = (uint8*)malloc(n);
+  var got: int64 = 0;
+  while (got < n) {
+    var k: int64 = file_read_at(fd, buf + got, n - got, got);
+    if (k <= 0) { break; }
+    got = got + k;
+  }
+  file_close(fd);
+  return str_from_bytes((cstring)buf, got);
+}
+
+fn main(argc: int32, argv: cstring*) -> int32 {
+  var path: string = "bench/data.csv";
+  if (argc > 1) {
+    path = str_from_cstr(argv[1]);
+  } else {
+    var fd: int64 = file_open(path, FILE_READ);
+    if (fd < 0) {
+      println("writing {path}");
+      make_data(path);
+    } else {
+      file_close(fd);
+    }
+  }
+  var data: string = read_file(path);
+  var size: int64 = (int64)data.length;
+  println("{path}: {size / 1000000} MB");
+  var d: CsvDialect = csv_dialect();
+  d.has_header = false;
+  d.flexible = true;
+
+  for round in 0..3 {
+    var t0: int64 = time_mono_ns();
+    var r: CsvReader* = csv_reader_from_string(data, d);
+    var rec: CsvRecord;
+    var fields: int64 = 0;
+    var bytes: int64 = 0;
+    while (csv_read(r, &rec) == CSV_RECORD) {
+      fields = fields + (int64)rec.n;
+      for i in 0..rec.n { bytes = bytes + (int64)rec.fields[i].length; }
+    }
+    csv_reader_free(r);
+    var ns: int64 = time_since_ns(t0);
+    println("read memory:  {mbps(size, ns)} MB/s ({fields} fields, {bytes} bytes)");
+  }
+
+  var t1: int64 = time_mono_ns();
+  var rf: CsvReader* = csv_reader_open(path, d);
+  csv_reader_set_buffer(rf, 1048576);
+  var rec2: CsvRecord;
+  var rows: int64 = 0;
+  while (csv_read(rf, &rec2) == CSV_RECORD) { rows = rows + 1; }
+  csv_reader_free(rf);
+  println("read file:    {mbps(size, time_since_ns(t1))} MB/s ({rows} records)");
+
+  // Typed: decode two number columns per row.
+  var t2: int64 = time_mono_ns();
+  var rt: CsvReader* = csv_reader_from_string(data, csv_dialect());
+  var rec3: CsvRecord;
+  var total: float64 = 0.0;
+  var q: int64 = 0;
+  while (csv_read(rt, &rec3) == CSV_RECORD) {
+    var p: float64 = 0.0;
+    var k: int64 = 0;
+    csv_parse_f64(rec3.fields[2], &p);
+    csv_parse_i64(rec3.fields[3], &k);
+    total = total + p;
+    q = q + k;
+  }
+  csv_reader_free(rt);
+  println("read + parse: {mbps(size, time_since_ns(t2))} MB/s ({q})");
+
+  // Write the records back out, in memory.
+  var r4: CsvReader* = csv_reader_from_string(data, d);
+  var w: CsvWriter* = csv_writer_new(csv_dialect());
+  var rec4: CsvRecord;
+  var t3: int64 = time_mono_ns();
+  while (csv_read(r4, &rec4) == CSV_RECORD) { csv_write_record(w, &rec4); }
+  var ns3: int64 = time_since_ns(t3);
+  var out: string = csv_writer_bytes(w);
+  println("read + write: {mbps(size, ns3)} MB/s (same bytes: {out == data})");
+  csv_writer_free(w);
+  csv_reader_free(r4);
+  return 0;
+}

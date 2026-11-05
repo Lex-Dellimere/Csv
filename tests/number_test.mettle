@@ -1,0 +1,98 @@
+// Numbers: float64 formatting equals Python's repr and parses back to the
+// same bits; decimal text (up to 800 digits, near and past the float range)
+// parses to the same bits as Python's float(); integer edge cases.
+import "std/io";
+import "std/conv";
+import "csv/csv";
+import "tutil";
+
+fn bits_of(v: float64) -> uint64 {
+  return *(uint64*)&v;
+}
+
+fn main() -> int32 {
+  var text: string = t_read("tests/data/floats.txt");
+  var pos: int64 = 0;
+  var nf: int64 = 0;
+  var np: int64 = 0;
+  var buf: uint8[40];
+  while (pos < (int64)text.length) {
+    var line: string = t_line(text, &pos);
+    var kind: string = t_word(line, 0);
+    if (kind == "f") {
+      nf = nf + 1;
+      var bits: uint64 = 0;
+      csv_parse_u64(t_word(line, 1), &bits);
+      var want: string = t_word(line, 2);
+      var v: float64 = *(float64*)&bits;
+      var n: int32 = csv_format_f64(v, &buf[0]);
+      var got: string = str_from_bytes((cstring)&buf[0], (int64)n);
+      t_ok("format {want}", got == want);
+      if (got != want) { println("  got {got}"); }
+      var back: float64 = 0.0;
+      t_ok("parse {want}", csv_parse_f64(want, &back) && bits_of(back) == bits);
+    } else if (kind == "p") {
+      np = np + 1;
+      var bits2: uint64 = 0;
+      csv_parse_u64(t_word(line, 2), &bits2);
+      var v2: float64 = 0.0;
+      var ok: bool = csv_parse_f64(t_word(line, 1), &v2);
+      t_ok("parse {t_word(line, 1)}", ok && bits_of(v2) == bits2);
+    }
+  }
+  println("floats: {nf} formatted, {np} parsed");
+
+  // float32: shortest text reads back to the same float32.
+  var seed: uint64 = 12345;
+  for i in 0..20000 {
+    seed = seed * 6364136223846793005 + 1442695040888963407;
+    var b32: uint32 = (uint32)(seed >> 32);
+    var f: float32 = *(float32*)&b32;
+    if ((b32 & (uint32)0x7F800000) == (uint32)0x7F800000) { continue; }
+    var n2: int32 = csv_format_f32(f, &buf[0]);
+    var back32: float32 = (float32)0.0;
+    var ok2: bool = csv_parse_f32(str_from_bytes((cstring)&buf[0], (int64)n2), &back32);
+    t_ok("f32 round trip {b32}", ok2 && *(uint32*)&back32 == b32);
+  }
+  var f1: float32 = (float32)0.1;
+  var n3: int32 = csv_format_f32(f1, &buf[0]);
+  t_ok("f32 0.1", str_from_bytes((cstring)&buf[0], (int64)n3) == "0.1");
+  var g: float32 = (float32)0.0;
+  t_ok("f32 parse", csv_parse_f32("16777217", &g) && g == (float32)16777216.0);
+  t_ok("f32 overflow", csv_parse_f32("3.5e38", &g) && g > (float32)3.4e38 && g == g * (float32)2.0);
+
+  // Accepted and refused float forms.
+  var x: float64 = 0.0;
+  t_ok("float .5", csv_parse_f64(".5", &x) && x == 0.5);
+  t_ok("float 5.", csv_parse_f64("5.", &x) && x == 5.0);
+  t_ok("float +1e3", csv_parse_f64("+1E+3", &x) && x == 1000.0);
+  t_ok("float Infinity", csv_parse_f64("-Infinity", &x) && x < -1.0e308);
+  t_ok("float NaN", csv_parse_f64("NaN", &x) && x != x);
+  t_ok("float empty", !csv_parse_f64("", &x));
+  t_ok("float dot", !csv_parse_f64(".", &x));
+  t_ok("float space", !csv_parse_f64(" 1", &x));
+  t_ok("float e", !csv_parse_f64("1e", &x));
+  t_ok("float junk", !csv_parse_f64("1.2.3", &x));
+  t_ok("float huge exp", csv_parse_f64("1e99999999999", &x) && x > 1.0e308);
+  t_ok("float tiny exp", csv_parse_f64("1e-99999999999", &x) && x == 0.0);
+  t_ok("float zeros", csv_parse_f64("0000000000000000000000000.000000000000000000001", &x) && x == 1e-21);
+
+  // Integers.
+  var i: int64 = 0;
+  var u: uint64 = 0;
+  t_ok("i64 max", csv_parse_i64("9223372036854775807", &i) && i == 9223372036854775807);
+  t_ok("i64 min", csv_parse_i64("-9223372036854775808", &i) && i == -9223372036854775807 - 1);
+  t_ok("i64 over", !csv_parse_i64("9223372036854775808", &i));
+  t_ok("i64 under", !csv_parse_i64("-9223372036854775809", &i));
+  t_ok("i64 plus", csv_parse_i64("+42", &i) && i == 42);
+  t_ok("i64 sign only", !csv_parse_i64("-", &i));
+  t_ok("i64 space", !csv_parse_i64("1 ", &i));
+  t_ok("u64 max", csv_parse_u64("18446744073709551615", &u) && u == 18446744073709551615);
+  t_ok("u64 over", !csv_parse_u64("18446744073709551616", &u));
+  t_ok("u64 minus", !csv_parse_u64("-1", &u));
+  var b: bool = false;
+  t_ok("bool TRUE", csv_parse_bool("TRUE", &b) && b);
+  t_ok("bool 0", csv_parse_bool("0", &b) && !b);
+  t_ok("bool yes", !csv_parse_bool("yes", &b));
+  return t_done("numbers");
+}

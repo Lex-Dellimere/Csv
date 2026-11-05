@@ -1,0 +1,25 @@
+// mbuild.mettle: the project file for csv. `mbuild help` lists its commands.
+//
+// Layout: src/csv.mettle is the facade; modules sit in src/csv/.
+// Tests: tests/<name>_test.mettle, run with `mbuild test` and `mbuild test -r`.
+import "mbuild/api";
+
+fn project() {
+  mb_package("csv", "0.1.0");
+  mb_meta("description", "RFC 4180 CSV for Mettle: fast streaming reader, correct writer, dialects, typed rows");
+  mb_meta("license", "Apache-2.0");
+  mb_meta("repository", "https://github.com/Lex-Dellimere/Csv");
+  mb_import_root("src");
+  mb_bin("bench", "bench/bench.mettle");
+  mb_bin("csvstat", "examples/csvstat.mettle");
+  mb_bin("trades", "examples/trades.mettle");
+}
+
+fn deps() {
+}
+
+// bench: build the benchmark in release and run it (`mbuild bench`).
+fn cmd_bench(a: MbArgs*) -> int32 {
+  if (mb_mbuild("build -r") != 0) { return 1; }
+  return mb_cmd_run(mb_cmd(mb_out("bench", mb_os(), "release")));
+}

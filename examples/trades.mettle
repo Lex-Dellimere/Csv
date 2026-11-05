@@ -1,0 +1,41 @@
+// trades: reads rows into a struct by header name, totals them, and writes
+// a summary CSV to standard output.
+import "std/io";
+import "csv/csv";
+
+struct Trade {
+  symbol: string;
+  qty: int64;
+  price: float64;
+}
+
+const INPUT: string = "symbol,price,qty\nACME,10.5,3\n\"Big, Co\",99.25,1\nACME,11,2\n";
+
+fn main() -> int32 {
+  var schema: CsvSchema* = csv_schema_new();
+  comptime for f in typeof(Trade).fields {
+    csv_schema_add(schema, f.name, (int32)f.type.kind, f.offset, f.type.size);
+  }
+
+  var r: CsvReader* = csv_reader_from_string(INPUT, csv_dialect());
+  var w: CsvWriter* = csv_writer_new(csv_dialect());
+  csv_write_row(w, "symbol", "value");
+  var t: Trade;
+  while (true) {
+    var st: int32 = csv_read_row(r, schema, &t);
+    if (st == CSV_END) { break; }
+    if (st == CSV_ERROR) {
+      var buf: uint8[200];
+      println(csv_error_format(csv_reader_error(r), &buf[0], 200));
+      return 1;
+    }
+    csv_write_field(w, t.symbol);
+    csv_write_f64(w, t.price * (float64)t.qty);
+    csv_write_end(w);
+  }
+  print(csv_writer_bytes(w));
+  csv_writer_free(w);
+  csv_reader_free(r);
+  csv_schema_free(schema);
+  return 0;
+}

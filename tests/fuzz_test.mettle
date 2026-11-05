@@ -1,0 +1,232 @@
+// Random and mutated input in random dialects. Nothing may crash, and:
+//  - reading from memory and as a stream (random chunk and buffer sizes)
+//    gives the same records and the same error;
+//  - a lenient flexible reader never reports an error;
+//  - errors point inside the input;
+//  - writing the records and reading them back gives the same records;
+//  - the number parsers never crash, and parsed floats format and parse
+//    back to the same bits.
+import "std/io";
+import "std/mem";
+import "csv/csv";
+import "tutil";
+
+var g_seed: uint64 = 88172645463325252;
+
+fn rnd() -> uint64 {
+  g_seed = g_seed ^ (g_seed << 13);
+  g_seed = g_seed ^ (g_seed >> 7);
+  g_seed = g_seed ^ (g_seed << 17);
+  return g_seed;
+}
+
+fn pick(n: int64) -> int64 {
+  return (int64)(rnd() % (uint64)n);
+}
+
+const SPECIALS: string = ",;\t|\"'\\#\r\n ";
+
+fn rand_dialect() -> CsvDialect {
+  var d: CsvDialect = csv_dialect();
+  var delims: string = ",;\t|";
+  var quotes: string = "\"'";
+  d.delimiter = delims.chars[pick(4)];
+  d.quote = quotes.chars[pick(2)];
+  if (pick(10) == 0) { d.quote = (uint8)0; }
+  if (pick(3) == 0) { d.escape = (uint8)'\\'; }
+  d.double_quote = pick(5) != 0;
+  if (pick(4) == 0) { d.comment = (uint8)'#'; }
+  if (pick(10) == 0) { d.terminator = (uint8)'~'; }
+  d.skip_initial_space = pick(4) == 0;
+  d.trim = (int32)pick(4);
+  d.strict = pick(3) == 0;
+  d.flexible = pick(2) == 0;
+  d.has_header = pick(2) == 0;
+  d.blank_lines = (int32)pick(2);
+  d.check_utf8 = pick(4) == 0;
+  d.quote_style = (int32)pick(3);
+  d.line_end = (int32)pick(3);
+  return d;
+}
+
+fn rand_input(buf: uint8*, cap: int64) -> int64 {
+  var n: int64 = pick(cap);
+  if (pick(4) == 0) { n = pick(16); }
+  for i in 0..n {
+    var k: int64 = pick(10);
+    if (k < 5) {
+      buf[i] = SPECIALS.chars[pick((int64)SPECIALS.length)];
+    } else if (k < 9) {
+      buf[i] = (uint8)'a' + (uint8)pick(3);
+    } else {
+      buf[i] = (uint8)pick(256);
+    }
+  }
+  return n;
+}
+
+struct Seen {
+  text: uint8*;
+  len: int64;
+  err: CsvError;
+  errs: int32;
+}
+
+// Renders records (header included) and remembers the last error.
+fn read_all(r: CsvReader*, out: uint8*, cap: int64, seen: Seen*) {
+  seen->errs = 0;
+  var at: int64 = 0;
+  var h: CsvRecord* = csv_reader_headers(r);
+  if (h != 0) {
+    for i in 0..h->n {
+      var f: string = h->fields[i];
+      if (at + (int64)f.length + 2 < cap) {
+        memcpy(out + at, f.chars, (int64)f.length);
+        at = at + (int64)f.length;
+        out[at] = (uint8)1;
+        at = at + 1;
+      }
+    }
+    if (at < cap) { out[at] = (uint8)2; at = at + 1; }
+  }
+  var rec: CsvRecord;
+  var guard: int32 = 0;
+  while (guard < 100000) {
+    guard = guard + 1;
+    var st: int32 = csv_read(r, &rec);
+    if (st == CSV_END) { break; }
+    if (st == CSV_ERROR) {
+      seen->err = csv_reader_error(r);
+      seen->errs = seen->errs + 1;
+      if (seen->err.kind != CSV_ERR_FIELD_COUNT && seen->err.kind != CSV_ERR_UTF8) { break; }
+    }
+    for i in 0..rec.n {
+      var f: string = rec.fields[i];
+      if (at + (int64)f.length + 2 < cap) {
+        memcpy(out + at, f.chars, (int64)f.length);
+        at = at + (int64)f.length;
+        out[at] = (uint8)1;
+        at = at + 1;
+      }
+    }
+    if (at < cap) { out[at] = (uint8)2; at = at + 1; }
+  }
+  seen->len = at;
+}
+
+fn same(a: Seen*, b: Seen*) -> bool {
+  if (a->len != b->len || a->errs != b->errs) { return false; }
+  if (memcmp(a->text, b->text, a->len) != 0) { return false; }
+  if (a->errs > 0) {
+    if (a->err.kind != b->err.kind || a->err.byte != b->err.byte || a->err.line != b->err.line ||
+        a->err.column != b->err.column || a->err.record != b->err.record) { return false; }
+  }
+  return true;
+}
+
+fn round_trip_ok(d: CsvDialect) -> bool {
+  if (d.quote == (uint8)0 && d.escape == (uint8)0) { return false; }
+  if (!d.double_quote && d.escape == (uint8)0) { return false; }
+  if (d.trim != CSV_TRIM_NONE) { return false; }
+  return true;
+}
+
+fn main() -> int32 {
+  var cap: int64 = 300;
+  var input: uint8* = (uint8*)malloc(cap);
+  var ta: uint8* = (uint8*)malloc(65536);
+  var tb: uint8* = (uint8*)malloc(65536);
+  var a: Seen;
+  var b: Seen;
+  a.text = ta;
+  b.text = tb;
+  var iters: int64 = 30000;
+  var trips: int64 = 0;
+  for it in 0..iters {
+    var d: CsvDialect = rand_dialect();
+    var n: int64 = rand_input(input, cap);
+    var data: string = str_from_bytes((cstring)input, n);
+    var r: CsvReader* = csv_reader_from_string(data, d);
+    read_all(r, ta, 65536, &a);
+    csv_reader_free(r);
+
+    var feed: TFeed = { data: data, at: 0, step: pick(9) + 1 };
+    var rs: CsvReader* = csv_reader_from_fn(t_feed_fn(&feed), d);
+    csv_reader_set_buffer(rs, pick(12) + 1);
+    read_all(rs, tb, 65536, &b);
+    csv_reader_free(rs);
+    t_ok("stream equals memory {it}", same(&a, &b));
+
+    if (a.errs > 0) {
+      var e: CsvError = a.err;
+      t_ok("error inside input {it}", e.byte >= 0 && e.byte <= n && e.line >= 1 && e.record >= 1);
+      if (!d.strict && d.flexible && !d.check_utf8) { t_ok("lenient never fails {it}", false); }
+    }
+
+    // Write what was read, read it again.
+    var rd: CsvDialect = d;
+    rd.flexible = true;
+    rd.has_header = false;
+    rd.check_utf8 = false;
+    if (round_trip_ok(d)) {
+      var r1: CsvReader* = csv_reader_from_string(data, rd);
+      var w: CsvWriter* = csv_writer_new(d);
+      var rec: CsvRecord;
+      var st1: int32 = CSV_RECORD;
+      var can: bool = true;
+      while (true) {
+        st1 = csv_read(r1, &rec);
+        if (st1 != CSV_RECORD) { break; }
+        // Without quotes a lone empty field cannot be told from a blank
+        // line (Python refuses to write one).
+        if (d.quote == (uint8)0 && rec.n == 1 && rec.fields[0].length == 0) { can = false; }
+        csv_write_record(w, &rec);
+      }
+      csv_reader_free(r1);
+      if (st1 == CSV_ERROR || !can) {
+        csv_writer_free(w);
+        continue;
+      }
+      trips = trips + 1;
+      var wrote: string = csv_writer_bytes(w);
+      var r2: CsvReader* = csv_reader_from_string(data, rd);
+      read_all(r2, ta, 65536, &a);
+      csv_reader_free(r2);
+      var r3: CsvReader* = csv_reader_from_string(wrote, rd);
+      read_all(r3, tb, 65536, &b);
+      csv_reader_free(r3);
+      var ok: bool = same(&a, &b);
+      t_ok("round trip {it}", ok);
+      csv_writer_free(w);
+    }
+
+    // Number parsers on the same bytes.
+    var f: float64 = 0.0;
+    if (csv_parse_f64(data, &f) && f == f) {
+      var nb: uint8[40];
+      var k: int32 = csv_format_f64(f, &nb[0]);
+      var g: float64 = 0.0;
+      t_ok("float round trip {it}", csv_parse_f64(str_from_bytes((cstring)&nb[0], (int64)k), &g) && *(uint64*)&g == *(uint64*)&f);
+    }
+    var iv: int64 = 0;
+    csv_parse_i64(data, &iv);
+    var fv: float32 = (float32)0.0;
+    csv_parse_f32(data, &fv);
+  }
+  // Random numeric-looking text.
+  var digits: string = "0123456789.eE+-";
+  for it2 in 0..30000 {
+    var n2: int64 = pick(40) + 1;
+    for i in 0..n2 { input[i] = digits.chars[pick((int64)digits.length)]; }
+    var s2: string = str_from_bytes((cstring)input, n2);
+    var f2: float64 = 0.0;
+    if (csv_parse_f64(s2, &f2)) {
+      var nb2: uint8[40];
+      var k2: int32 = csv_format_f64(f2, &nb2[0]);
+      var g2: float64 = 0.0;
+      t_ok("numeric text round trip {it2}", csv_parse_f64(str_from_bytes((cstring)&nb2[0], (int64)k2), &g2) && *(uint64*)&g2 == *(uint64*)&f2);
+    }
+  }
+  println("fuzz: {iters} inputs, {trips} write round trips");
+  return t_done("fuzz");
+}

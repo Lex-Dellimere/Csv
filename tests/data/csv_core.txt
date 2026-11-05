@@ -1,0 +1,549 @@
+case one_row_one_field
+set header 0
+set flexible 1
+set blank 0
+set bom 0
+in 61
+row =61
+end
+case one_row_many_fields
+set header 0
+set flexible 1
+set blank 0
+set bom 0
+in 612c622c63
+row =61 =62 =63
+end
+case one_row_trailing_comma
+set header 0
+set flexible 1
+set blank 0
+set bom 0
+in 612c622c
+row =61 =62 =
+end
+case one_row_one_field_lf
+set header 0
+set flexible 1
+set blank 0
+set bom 0
+in 610a
+row =61
+end
+case one_row_many_fields_lf
+set header 0
+set flexible 1
+set blank 0
+set bom 0
+in 612c622c630a
+row =61 =62 =63
+end
+case one_row_trailing_comma_lf
+set header 0
+set flexible 1
+set blank 0
+set bom 0
+in 612c622c0a
+row =61 =62 =
+end
+case one_row_one_field_crlf
+set header 0
+set flexible 1
+set blank 0
+set bom 0
+in 610d0a
+row =61
+end
+case one_row_many_fields_crlf
+set header 0
+set flexible 1
+set blank 0
+set bom 0
+in 612c622c630d0a
+row =61 =62 =63
+end
+case one_row_trailing_comma_crlf
+set header 0
+set flexible 1
+set blank 0
+set bom 0
+in 612c622c0d0a
+row =61 =62 =
+end
+case one_row_one_field_cr
+set header 0
+set flexible 1
+set blank 0
+set bom 0
+in 610d
+row =61
+end
+case one_row_many_fields_cr
+set header 0
+set flexible 1
+set blank 0
+set bom 0
+in 612c622c630d
+row =61 =62 =63
+end
+case one_row_trailing_comma_cr
+set header 0
+set flexible 1
+set blank 0
+set bom 0
+in 612c622c0d
+row =61 =62 =
+end
+case many_rows_one_field
+set header 0
+set flexible 1
+set blank 0
+set bom 0
+in 610a62
+row =61
+row =62
+end
+case many_rows_many_fields
+set header 0
+set flexible 1
+set blank 0
+set bom 0
+in 612c622c630a782c792c7a
+row =61 =62 =63
+row =78 =79 =7a
+end
+case many_rows_trailing_comma
+set header 0
+set flexible 1
+set blank 0
+set bom 0
+in 612c622c0a782c792c
+row =61 =62 =
+row =78 =79 =
+end
+case many_rows_one_field_lf
+set header 0
+set flexible 1
+set blank 0
+set bom 0
+in 610a620a
+row =61
+row =62
+end
+case many_rows_many_fields_lf
+set header 0
+set flexible 1
+set blank 0
+set bom 0
+in 612c622c630a782c792c7a0a
+row =61 =62 =63
+row =78 =79 =7a
+end
+case many_rows_trailing_comma_lf
+set header 0
+set flexible 1
+set blank 0
+set bom 0
+in 612c622c0a782c792c0a
+row =61 =62 =
+row =78 =79 =
+end
+case many_rows_one_field_crlf
+set header 0
+set flexible 1
+set blank 0
+set bom 0
+in 610d0a620d0a
+row =61
+row =62
+end
+case many_rows_many_fields_crlf
+set header 0
+set flexible 1
+set blank 0
+set bom 0
+in 612c622c630d0a782c792c7a0d0a
+row =61 =62 =63
+row =78 =79 =7a
+end
+case many_rows_trailing_comma_crlf
+set header 0
+set flexible 1
+set blank 0
+set bom 0
+in 612c622c0d0a782c792c0d0a
+row =61 =62 =
+row =78 =79 =
+end
+case many_rows_one_field_cr
+set header 0
+set flexible 1
+set blank 0
+set bom 0
+in 610d620d
+row =61
+row =62
+end
+case many_rows_many_fields_cr
+set header 0
+set flexible 1
+set blank 0
+set bom 0
+in 612c622c630d782c792c7a0d
+row =61 =62 =63
+row =78 =79 =7a
+end
+case many_rows_trailing_comma_cr
+set header 0
+set flexible 1
+set blank 0
+set bom 0
+in 612c622c0d782c792c0d
+row =61 =62 =
+row =78 =79 =
+end
+case trailing_lines_no_record
+set header 0
+set flexible 1
+set blank 0
+set bom 0
+in 0a0a0a612c622c630a782c792c7a0a0a0a
+row =61 =62 =63
+row =78 =79 =7a
+end
+case trailing_lines_no_record_cr
+set header 0
+set flexible 1
+set blank 0
+set bom 0
+in 0d0d0d612c622c630d782c792c7a0d0d0d
+row =61 =62 =63
+row =78 =79 =7a
+end
+case trailing_lines_no_record_crlf
+set header 0
+set flexible 1
+set blank 0
+set bom 0
+in 0d0a0d0a0d0a612c622c630d0a782c792c7a0d0a0d0a0d0a
+row =61 =62 =63
+row =78 =79 =7a
+end
+case empty
+set header 0
+set flexible 1
+set blank 0
+set bom 0
+in 
+end
+case empty_lines
+set header 0
+set flexible 1
+set blank 0
+set bom 0
+in 0a0a0a0a
+end
+case empty_lines_interspersed
+set header 0
+set flexible 1
+set blank 0
+set bom 0
+in 0a0a612c620a0a0a782c790a0a0a6d2c6e0a
+row =61 =62
+row =78 =79
+row =6d =6e
+end
+case empty_lines_crlf
+set header 0
+set flexible 1
+set blank 0
+set bom 0
+in 0d0a0d0a0d0a0d0a
+end
+case empty_lines_interspersed_crlf
+set header 0
+set flexible 1
+set blank 0
+set bom 0
+in 0d0a0d0a612c620d0a0d0a0d0a782c790d0a0d0a0d0a6d2c6e0d0a
+row =61 =62
+row =78 =79
+row =6d =6e
+end
+case empty_lines_mixed
+set header 0
+set flexible 1
+set blank 0
+set bom 0
+in 0d0a0a0d0a0a
+end
+case empty_lines_interspersed_mixed
+set header 0
+set flexible 1
+set blank 0
+set bom 0
+in 0a0d0a612c620d0a0a0d0a782c790d0a0a0d0a6d2c6e0d0a
+row =61 =62
+row =78 =79
+row =6d =6e
+end
+case empty_lines_cr
+set header 0
+set flexible 1
+set blank 0
+set bom 0
+in 0d0d0d0d
+end
+case empty_lines_interspersed_cr
+set header 0
+set flexible 1
+set blank 0
+set bom 0
+in 0d0d612c620d0d0d782c790d0d0d6d2c6e0d
+row =61 =62
+row =78 =79
+row =6d =6e
+end
+case term_weird
+set header 0
+set flexible 1
+set blank 0
+set bom 0
+set terminator 122
+in 7a7a612c627a632c647a7a
+row =61 =62
+row =63 =64
+end
+case ascii_delimited
+set header 0
+set flexible 1
+set blank 0
+set bom 0
+set delimiter 31
+set terminator 30
+in 611f621e631f64
+row =61 =62
+row =63 =64
+end
+case bom_at_start
+set header 0
+set flexible 1
+set blank 0
+set bom 0
+in efbbbf61
+row =61
+end
+case bom_in_field
+set header 0
+set flexible 1
+set blank 0
+set bom 0
+in 61efbbbf
+row =61efbbbf
+end
+case bom_at_field_start
+set header 0
+set flexible 1
+set blank 0
+set bom 0
+in 612cefbbbf62
+row =61 =efbbbf62
+end
+case quote_empty
+set header 0
+set flexible 1
+set blank 0
+set bom 0
+in 2222
+row =
+end
+case quote_lf
+set header 0
+set flexible 1
+set blank 0
+set bom 0
+in 22220a
+row =
+end
+case quote_space
+set header 0
+set flexible 1
+set blank 0
+set bom 0
+in 222022
+row =20
+end
+case quote_inner_space
+set header 0
+set flexible 1
+set blank 0
+set bom 0
+in 2220612022
+row =206120
+end
+case quote_outer_space
+set header 0
+set flexible 1
+set blank 0
+set bom 0
+in 20202261222020
+row =20202261222020
+end
+case quote_change
+set header 0
+set flexible 1
+set blank 0
+set bom 0
+set quote 122
+in 7a617a
+row =61
+end
+case quote_delimiter
+set header 0
+set flexible 1
+set blank 0
+set bom 0
+set quote 44
+in 2c612c2c62
+row =612c62
+end
+case quote_no_escapes
+set header 0
+set flexible 1
+set blank 0
+set bom 0
+in 22615c226222
+row =615c6222
+end
+case quote_escapes_no_double
+set header 0
+set flexible 1
+set blank 0
+set bom 0
+set double_quote 0
+in 226122226222
+row =61226222
+end
+case quote_escapes
+set header 0
+set flexible 1
+set blank 0
+set bom 0
+set escape 92
+in 22615c226222
+row =612262
+end
+case quote_escapes_change
+set header 0
+set flexible 1
+set blank 0
+set bom 0
+set escape 122
+in 22617a226222
+row =612262
+end
+case quote_escapes_with_comma
+set header 0
+set flexible 1
+set blank 0
+set bom 0
+set escape 92
+set double_quote 0
+in 225c22412c425c2222
+row =22412c4222
+end
+case quoting_disabled
+set header 0
+set flexible 1
+set blank 0
+set bom 0
+set quote 0
+in 226162632c666f6f22
+row =22616263 =666f6f22
+end
+case delimiter_tabs
+set header 0
+set flexible 1
+set blank 0
+set bom 0
+set delimiter 9
+in 610962
+row =61 =62
+end
+case delimiter_weird
+set header 0
+set flexible 1
+set blank 0
+set bom 0
+set delimiter 122
+in 617a62
+row =61 =62
+end
+case extra_record_crlf_1
+set header 0
+set flexible 1
+set blank 0
+set bom 0
+in 666f6f0a310a
+row =666f6f
+row =31
+end
+case extra_record_crlf_2
+set header 0
+set flexible 1
+set blank 0
+set bom 0
+in 666f6f0d0a310d0a
+row =666f6f
+row =31
+end
+case comment_1
+set header 0
+set flexible 1
+set blank 0
+set bom 0
+set comment 35
+in 666f6f0a232068690a6261720a
+row =666f6f
+row =626172
+end
+case comment_2
+set header 0
+set flexible 1
+set blank 0
+set bom 0
+set comment 35
+in 666f6f0a20232068690a6261720a
+row =666f6f
+row =2023206869
+row =626172
+end
+case comment_3
+set header 0
+set flexible 1
+set blank 0
+set bom 0
+set comment 10
+in 666f6f0a232068690a6261720a
+row =666f6f
+row =23206869
+row =626172
+end
+case comment_4
+set header 0
+set flexible 1
+set blank 0
+set bom 0
+set comment 35
+in 666f6f2c622361722c62617a
+row =666f6f =62236172 =62617a
+end
+case comment_5
+set header 0
+set flexible 1
+set blank 0
+set bom 0
+set comment 35
+in 666f6f2c236261722c62617a
+row =666f6f =23626172 =62617a
+end

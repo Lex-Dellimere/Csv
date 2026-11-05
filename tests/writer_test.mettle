@@ -1,0 +1,152 @@
+// Writer: byte-for-byte against Python's csv.writer on 3,000 random row
+// sets (minimal, all and non-numeric quoting; CRLF and LF), and every
+// output read back to the same fields.
+import "std/io";
+import "std/mem";
+import "std/file";
+import "csv/csv";
+import "tutil";
+
+const MAXF = 64;
+
+fn main() -> int32 {
+  var text: string = t_read("tests/data/python_write.txt");
+  var pos: int64 = 0;
+  var d: CsvDialect = csv_dialect();
+  var w: CsvWriter* = (CsvWriter*)0;
+  var name: string = "";
+  var fields: string* = (string*)malloc(16 * MAXF);
+  var rowlen: int32* = (int32*)malloc(4 * MAXF);
+  var nf: int32 = 0;
+  var nr: int32 = 0;
+  var cases: int64 = 0;
+  while (pos < (int64)text.length) {
+    var line: string = t_line(text, &pos);
+    var cmd: string = t_word(line, 0);
+    if (cmd == "case") {
+      d = csv_dialect();
+      name = t_word(line, 1);
+      nf = 0;
+      nr = 0;
+    } else if (cmd == "set") {
+      t_set(&d, t_word(line, 1), t_int(t_word(line, 2)));
+    } else if (cmd == "row") {
+      var k: int32 = t_words(line);
+      rowlen[nr] = k - 1;
+      nr = nr + 1;
+      for i in 1..k {
+        var wd: string = t_word(line, i);
+        fields[nf] = t_hex(str_from_bytes((cstring)(wd.chars + 1), (int64)wd.length - 1));
+        nf = nf + 1;
+      }
+    } else if (cmd == "out") {
+      cases = cases + 1;
+      var want: string = t_hex(t_word(line, 1));
+      w = csv_writer_new(d);
+      var at: int32 = 0;
+      for r in 0..nr {
+        for i in 0..rowlen[r] {
+          csv_write_field(w, fields[at]);
+          at = at + 1;
+        }
+        csv_write_end(w);
+      }
+      var got: string = csv_writer_bytes(w);
+      t_ok("{name} matches python", got == want);
+      if (got != want) { println("  want [{want}]\n  got  [{got}]"); }
+      // Read it back.
+      var rd: CsvDialect = d;
+      rd.has_header = false;
+      rd.flexible = true;
+      var rr: CsvReader* = csv_reader_from_string(got, rd);
+      var rec: CsvRecord;
+      at = 0;
+      var same: bool = true;
+      for r in 0..nr {
+        if (csv_read(rr, &rec) != CSV_RECORD || rec.n != rowlen[r]) {
+          same = false;
+          break;
+        }
+        for i in 0..rowlen[r] {
+          if (rec.fields[i] != fields[at]) { same = false; }
+          at = at + 1;
+        }
+      }
+      if (same && csv_read(rr, &rec) != CSV_END) { same = false; }
+      t_ok("{name} reads back", same);
+      csv_reader_free(rr);
+      csv_writer_free(w);
+    }
+  }
+  println("cases: {cases}");
+
+  // Escapes instead of doubled quotes, and quoting off with an escape byte.
+  var e: CsvDialect = csv_dialect();
+  e.escape = (uint8)'\\';
+  e.double_quote = false;
+  w = csv_writer_new(e);
+  csv_write_row(w, "a\"b", "c\\d", "plain");
+  t_ok("escape style", csv_writer_bytes(w) == "\"a\\\"b\",\"c\\\\d\",plain\r\n");
+  csv_writer_free(w);
+  e.quote_style = CSV_QUOTE_NEVER;
+  w = csv_writer_new(e);
+  csv_write_row(w, "a,b", "c\nd");
+  t_ok("never with escape", csv_writer_bytes(w) == "a\\,b,c\\\nd\r\n");
+  csv_writer_free(w);
+
+  // Comments, initial spaces and single empty fields round-trip.
+  var c: CsvDialect = csv_dialect();
+  c.comment = (uint8)'#';
+  c.skip_initial_space = true;
+  c.line_end = CSV_EOL_LF;
+  w = csv_writer_new(c);
+  csv_write_row(w, "#x", "#y");
+  csv_write_row(w, " lead", "b");
+  csv_write_row(w, "");
+  t_ok("comment and space", csv_writer_bytes(w) == "\"#x\",#y\n\" lead\",b\n\"\"\n");
+  csv_writer_free(w);
+
+  // Numbers.
+  var n: CsvDialect = csv_dialect();
+  n.quote_style = CSV_QUOTE_NON_NUMERIC;
+  w = csv_writer_new(n);
+  csv_write_field(w, "s");
+  csv_write_i64(w, -9223372036854775807 - 1);
+  csv_write_u64(w, 18446744073709551615);
+  csv_write_f64(w, 0.1);
+  csv_write_f32(w, (float32)0.1);
+  csv_write_bool(w, true);
+  csv_write_end(w);
+  t_ok("numbers", csv_writer_bytes(w) == "\"s\",-9223372036854775808,18446744073709551615,0.1,0.1,\"true\"\r\n");
+  csv_writer_free(w);
+
+  // A file round trip through a writer and a streaming reader.
+  var path: string = "writer_test.tmp.csv";
+  var fw: CsvWriter* = csv_writer_create(path, csv_dialect());
+  t_ok("create file", fw != 0);
+  if (fw != 0) {
+    for i in 0..20000 {
+      csv_write_i64(fw, (int64)i);
+      csv_write_field(fw, "text, with \"quotes\"");
+      csv_write_end(fw);
+    }
+    t_ok("close file", csv_writer_close(fw));
+    var d2: CsvDialect = csv_dialect();
+    d2.has_header = false;
+    var fr: CsvReader* = csv_reader_open(path, d2);
+    t_ok("open file", fr != 0);
+    var rec2: CsvRecord;
+    var count: int64 = 0;
+    var good: bool = true;
+    while (csv_read(fr, &rec2) == CSV_RECORD) {
+      var v: int64 = -1;
+      csv_parse_i64(rec2.fields[0], &v);
+      if (v != count || rec2.fields[1] != "text, with \"quotes\"") { good = false; }
+      count = count + 1;
+    }
+    t_ok("file rows", good && count == 20000);
+    csv_reader_free(fr);
+    file_remove(path);
+  }
+  return t_done("writer");
+}

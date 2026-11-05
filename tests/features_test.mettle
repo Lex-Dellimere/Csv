@@ -1,0 +1,218 @@
+// Headers, trimming, comments, BOM, strict errors with positions, field
+// counts, UTF-8 checks, size limits and typed rows.
+import "std/io";
+import "std/mem";
+import "csv/csv";
+import "tutil";
+
+var g_out: uint8* = (uint8*)0;
+
+fn render(s: string, d: CsvDialect) -> string {
+  var r: CsvReader* = csv_reader_from_string(s, d);
+  var out: string = t_render(r, g_out, 4096);
+  csv_reader_free(r);
+  return out;
+}
+
+fn first_error(s: string, d: CsvDialect) -> CsvError {
+  var r: CsvReader* = csv_reader_from_string(s, d);
+  var rec: CsvRecord;
+  var e: CsvError;
+  while (true) {
+    var st: int32 = csv_read(r, &rec);
+    if (st == CSV_END) { break; }
+    if (st == CSV_ERROR) {
+      e = csv_reader_error(r);
+      break;
+    }
+  }
+  csv_reader_free(r);
+  return e;
+}
+
+fn at(e: CsvError, kind: int32, line: int64, col: int64, rec: int64, field: int32) -> bool {
+  var ok: bool = e.kind == kind && e.line == line && e.column == col && e.record == rec && e.field == field;
+  if (!ok) { println("  got kind {e.kind} line {e.line} col {e.column} record {e.record} field {e.field}"); }
+  return ok;
+}
+
+struct Trade {
+  sym: string;
+  qty: int32;
+  price: float64;
+  open: bool;
+  small: uint8;
+  note: string;
+}
+
+fn trade_schema() -> CsvSchema* {
+  var s: CsvSchema* = csv_schema_new();
+  comptime for f in typeof(Trade).fields {
+    csv_schema_add(s, f.name, (int32)f.type.kind, f.offset, f.type.size);
+  }
+  return s;
+}
+
+fn main() -> int32 {
+  g_out = (uint8*)malloc(4096);
+  var d: CsvDialect = csv_dialect();
+
+  // Headers are read once and kept.
+  var r: CsvReader* = csv_reader_from_string("a,b\n1,2\n3,4\n", d);
+  var h: CsvRecord* = csv_reader_headers(r);
+  t_ok("header", h != 0 && h->n == 2 && csv_record_get(h, 1) == "b");
+  t_ok("header find", csv_record_find(h, "b") == 1 && csv_record_find(h, "z") == -1);
+  t_ok("rows after header", t_render(r, g_out, 4096) == "<1><2>|<3><4>|");
+  t_ok("count", csv_reader_count(r) == 3);
+  csv_reader_free(r);
+  t_ok("header only", render("a,b\n", d) == "");
+  t_ok("empty input", render("", d) == "");
+
+  // BOM.
+  var p: CsvDialect = csv_dialect_python();
+  t_ok("bom skipped", render((t_hex("efbbbf") + "a,b"), p) == "<a><b>|");
+  p.keep_bom = true;
+  t_ok("bom kept", render((t_hex("efbbbf") + "a"), p) == ("<" + t_hex("efbbbf") + "a>|"));
+  p.keep_bom = false;
+  t_ok("bom only", render((t_hex("efbbbf")), p) == "");
+
+  // Trimming.
+  var tr: CsvDialect = csv_dialect();
+  tr.trim = CSV_TRIM_ALL;
+  r = csv_reader_from_string(" a , b\t\n 1 ,\" 2 \"\n", tr);
+  h = csv_reader_headers(r);
+  t_ok("trim header", csv_record_get(h, 0) == "a" && csv_record_get(h, 1) == "b");
+  t_ok("trim fields", t_render(r, g_out, 4096) == "<1><2>|");
+  csv_reader_free(r);
+  tr.trim = CSV_TRIM_HEADERS;
+  r = csv_reader_from_string(" a \n 1 \n", tr);
+  h = csv_reader_headers(r);
+  t_ok("trim headers only", csv_record_get(h, 0) == "a" && t_render(r, g_out, 4096) == "< 1 >|");
+  csv_reader_free(r);
+
+  // Comments, initial spaces, custom terminator, blank lines.
+  var c: CsvDialect = csv_dialect_python();
+  c.comment = (uint8)'#';
+  t_ok("comments", render("#x\na\n#y,z\r\n#\nb", c) == "<a>|<b>|");
+  var s: CsvDialect = csv_dialect_python();
+  s.skip_initial_space = true;
+  t_ok("initial space", render("a,  b,  \"c,d\"", s) == "<a><b><c,d>|");
+  var t: CsvDialect = csv_dialect_python();
+  t.terminator = (uint8)';';
+  t_ok("terminator", render("a,b;c\nd;", t) == "<a><b>|<c\nd>|");
+  t_ok("blank empty", render("a\n\nb", csv_dialect_python()) == "<a>||<b>|");
+  var bs: CsvDialect = csv_dialect_python();
+  bs.blank_lines = CSV_BLANK_SKIP;
+  t_ok("blank skip", render("a\n\r\n\rb", bs) == "<a>|<b>|");
+
+  // Strict errors, with line and column of the offending byte.
+  var st: CsvDialect = csv_dialect_rfc4180();
+  st.has_header = false;
+  t_ok("strict quote in field", at(first_error("a,b\nc,d\"e\n", st), CSV_ERR_QUOTE, 2, 4, 2, 2));
+  t_ok("strict after quote", at(first_error("x\n\"ab\"c", st), CSV_ERR_AFTER_QUOTE, 2, 5, 2, 1));
+  t_ok("strict unclosed", at(first_error("x,y\n1,\"ab\ncd", st), CSV_ERR_UNCLOSED, 2, 3, 2, 2));
+  st.escape = (uint8)'\\';
+  t_ok("strict escape at end", at(first_error("a\\", st), CSV_ERR_ESCAPE, 1, 2, 1, 1));
+  t_ok("strict multiline ok", render("\"a\nb\",c\r\nd,e", st) == "<a\nb><c>|<d><e>|");
+  t_ok("strict line after quoted newline", at(first_error("\"a\nb\",c\nd,\"e\"x", st), CSV_ERR_AFTER_QUOTE, 3, 6, 2, 2));
+  t_ok("cr lines", at(first_error("a\rb\r\rc\"", st), CSV_ERR_QUOTE, 4, 2, 3, 1));
+  var bufe: uint8[160];
+  var msg: string = csv_error_format(first_error("a,b\nc,d\"e\n", st), &bufe[0], 160);
+  t_ok("error text", msg == "line 2, column 4 (record 2, field 2): quote inside an unquoted field");
+
+  // Field counts: reported, then reading goes on.
+  var fc: CsvDialect = csv_dialect();
+  fc.has_header = false;
+  t_ok("field count", render("a,b\nc\nd,e", fc) == "<a><b>|!05<c>|<d><e>|");
+  t_ok("field count error", at(first_error("a,b\nc\n", fc), CSV_ERR_FIELD_COUNT, 2, 1, 2, 0));
+  var fe: CsvError = first_error("a,b\nc\n", fc);
+  t_ok("field count numbers", fe.expected == 2 && fe.got == 1);
+
+  // UTF-8 checks.
+  var u: CsvDialect = csv_dialect_python();
+  u.check_utf8 = true;
+  t_ok("utf8 ok", render("é,日本,😀", u) == "<é><日本><😀>|");
+  t_ok("utf8 bad", render(("a,b" + t_hex("ff") + "c\nd"), u) == ("!06<a><b" + t_hex("ff") + "c>|<d>|"));
+  t_ok("utf8 surrogate", render((t_hex("eda080")), u) == ("!06<" + t_hex("eda080") + ">|"));
+  t_ok("utf8 overlong", render((t_hex("c080")), u) == ("!06<" + t_hex("c080") + ">|"));
+  t_ok("utf8 cut", render(("ab" + t_hex("e697")), u) == ("!06<ab" + t_hex("e697") + ">|"));
+
+  // Size limit on a stream.
+  var lim: CsvDialect = csv_dialect_python();
+  lim.max_record = 100;
+  var big: uint8* = (uint8*)malloc(1000);
+  for i in 0..1000 { big[i] = (uint8)'x'; }
+  var feed: TFeed = { data: str_from_bytes((cstring)big, 1000), at: 0, step: 1000 };
+  var lr: CsvReader* = csv_reader_from_fn(t_feed_fn(&feed), lim);
+  csv_reader_set_buffer(lr, 16);
+  var rec: CsvRecord;
+  t_ok("too large", csv_read(lr, &rec) == CSV_ERROR && csv_reader_error(lr).kind == CSV_ERR_TOO_LARGE);
+  csv_reader_free(lr);
+  t_ok("too large in memory", render("a,b\nccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc", lim) == "<a><b>|!07");
+
+  // Record copies outlive the reader's buffers.
+  r = csv_reader_from_string("\"x\"\"y\",z\nq,w", csv_dialect_python());
+  csv_read(r, &rec);
+  var keep: CsvRecord = csv_record_clone(&rec);
+  csv_read(r, &rec);
+  t_ok("clone", keep.n == 2 && keep.fields[0] == "x\"y" && keep.fields[1] == "z" && rec.fields[0] == "q");
+  t_ok("clone position", keep.line == 1 && keep.index == 1);
+  csv_record_free(&keep);
+  csv_reader_free(r);
+
+  // Typed rows by header name, in any column order.
+  var sch: CsvSchema* = trade_schema();
+  r = csv_reader_from_string("note,price,sym,qty,open,small\nhi,1.5,ABC,-3,true,255\n,2,\"D,E\",7,0,0\n", csv_dialect());
+  var tr1: Trade;
+  t_ok("row 1", csv_read_row(r, sch, &tr1) == CSV_RECORD && tr1.sym == "ABC" && tr1.qty == -3 && tr1.price == 1.5 &&
+    tr1.open && tr1.small == (uint8)255 && tr1.note == "hi");
+  t_ok("row 2", csv_read_row(r, sch, &tr1) == CSV_RECORD && tr1.sym == "D,E" && tr1.qty == 7 && !tr1.open && tr1.note == "");
+  t_ok("rows end", csv_read_row(r, sch, &tr1) == CSV_END);
+  csv_reader_free(r);
+  csv_schema_free(sch);
+
+  sch = trade_schema();
+  r = csv_reader_from_string("sym,qty,price,open,small,note\nA,1,1,true,256,x\n", csv_dialect());
+  t_ok("u8 overflow", csv_read_row(r, sch, &tr1) == CSV_ERROR && at(csv_reader_error(r), CSV_ERR_PARSE, 2, 0, 2, 5));
+  csv_reader_free(r);
+  csv_schema_free(sch);
+
+  sch = trade_schema();
+  r = csv_reader_from_string("sym,qty\nA,1\n", csv_dialect());
+  t_ok("missing column", csv_read_row(r, sch, &tr1) == CSV_ERROR && csv_reader_error(r).kind == CSV_ERR_MISSING);
+  csv_reader_free(r);
+  csv_schema_free(sch);
+
+  // No header: by position, empty numbers as zero, copied strings, rename.
+  sch = trade_schema();
+  sch->empty_zero = true;
+  sch->copy_strings = true;
+  var nh: CsvDialect = csv_dialect();
+  nh.has_header = false;
+  r = csv_reader_from_string("Z,,,,,n", nh);
+  t_ok("by position", csv_read_row(r, sch, &tr1) == CSV_RECORD && tr1.sym == "Z" && tr1.qty == 0 && tr1.note == "n");
+  csv_reader_free(r);
+  t_ok("copied string survives", tr1.sym == "Z");
+  csv_decode_free(sch, &tr1);
+  csv_schema_free(sch);
+
+  sch = trade_schema();
+  csv_schema_rename(sch, "sym", "Symbol");
+  r = csv_reader_from_string("Symbol,qty,price,open,small,note\nQ,1,2,1,3,\n", csv_dialect());
+  t_ok("rename", csv_read_row(r, sch, &tr1) == CSV_RECORD && tr1.sym == "Q");
+  csv_reader_free(r);
+
+  // Struct rows round-trip through the writer.
+  var w: CsvWriter* = csv_writer_new(csv_dialect());
+  csv_write_header(w, sch);
+  var row: Trade = { sym: "a\"b", qty: -2147483647, price: 0.30000000000000004, open: true, small: (uint8)7, note: "line\nbreak" };
+  csv_write_struct(w, sch, &row);
+  r = csv_reader_from_string(csv_writer_bytes(w), csv_dialect());
+  var back: Trade;
+  t_ok("struct round trip", csv_read_row(r, sch, &back) == CSV_RECORD && back.sym == row.sym && back.qty == row.qty &&
+    back.price == row.price && back.open && back.small == row.small && back.note == row.note);
+  csv_reader_free(r);
+  csv_writer_free(w);
+  csv_schema_free(sch);
+  return t_done("features");
+}
